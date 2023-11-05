@@ -36,15 +36,15 @@ env.configure(
         },
         "absolute": False,
         "lanes_count": 4,
-        "reward_speed_range": [40, 60],
+        "reward_speed_range": [40, 60], #  [m/s] The reward for high speed is mapped linearly from this range to [0, HighwayEnv.HIGH_SPEED_REWARD].
         "simulation_frequency": 15,
         "vehicles_count": 50,
         "policy_frequency": 10,
         "initial_spacing": 5,
         "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
-        "duration": 20,
-        "collision_reward": -2,
-        "action_reward": -0.3,
+        "duration": 20, # [s]
+        "collision_reward": -2, #  The reward received when colliding with a vehicle.
+        "action_reward": -0.3, # penalty
         "screen_width": 600,
         "screen_height": 300,
         "centering_position": [0.3, 0.5],
