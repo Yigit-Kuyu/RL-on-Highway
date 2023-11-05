@@ -143,8 +143,8 @@ class DDPG_agent():
 
             step = 0
             while not done:
-
-                noise = self.noise_o.sample()       # Sample OU noise
+                self.env.render() # add
+                noise = self.noise_o.sample()       # Sample Ornstein-Ulhenbeck Noise
                 action = self.get_action(state_a)[0] # Get action from the Actor network
 
                 # Add noise to action to encourage exploration
@@ -164,10 +164,14 @@ class DDPG_agent():
                 front_v = False
 
                 # Set done condition and giving a penalty if the ego vehicle moves outside the road boundary
+                
+                # Normalize rewards in the range [0, 1] (http://highway-env.farama.org/rewards/)
                 if reward == 0:
                     reward = -3
                     done = True
+                
                 # Set done condition and giving a penalty if the ego vehicle is moving very slowly in the x-axis
+                # The ego-vehicle is always described in the first row (http://highway-env.farama.org/observations/)
                 elif next_state_a[0][3].item() < 0.15:
                     done = True
                     reward -= 0.7
