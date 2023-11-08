@@ -14,6 +14,10 @@ import numpy as np
 import highway_env
 highway_env.register_highway_envs()
 
+from matplotlib import pyplot as plt
+
+
+
 
 
 class Critic(nn.Module):
@@ -156,7 +160,8 @@ class DDPGAgent:
         self.noise = OUNoise(self.env.action_space)
         
     def get_action(self, obs): # From Actor network
-        state = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+        #state = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+        state = torch.FloatTensor(obs).to(self.device)
         action = self.actor.forward(state)
         action = action.squeeze(0).cpu().detach().numpy()
 
@@ -223,8 +228,8 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
         episode_reward = 0
         
         for step in range(max_steps):
-            env.render()
-            action = agent.get_action(state)
+            
+            action = agent.get_action(state[0])[0]
             action= action + exploration_noise.get_action(action)
             next_state, reward, done, _ = env.step(action)
             agent.replay_buffer.push(state, action, reward, next_state, done)
@@ -242,6 +247,7 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
                 break
 
             state = next_state
+            plt.imshow(env.render()) # KALDIM
 
 
 
@@ -251,7 +257,7 @@ env = gym.make('highway-v0', render_mode='rgb_array')
 env.configure(
     {"observation": {
         "type": "Kinematics",
-        "vehicles_count": 7,
+        "vehicles_count": 5, #rows of observation
         "features": ["presence", "x", "y", "vx", "vy"],
     },
 
@@ -298,12 +304,12 @@ state_dim = env.observation_space.shape[0] * env.observation_space.shape[1]
 state_dim_a = [env.observation_space.shape[0], env.observation_space.shape[1]]
 
 # Get action dimension
-#  throttle and steering angle (https://highway-env.farama.org/actions/)
+# throttle and steering angle (https://highway-env.farama.org/actions/)
 action_dim = env.action_space.shape[0]
 
 
 
 exploration_noise = OUNoise(env.action_space)
 
-agent = DDPGAgent(env, gamma, tau, buffer_maxlen, critic_lr, actor_lr,state_dim,action_dim)
+agent = DDPGAgent(env, gamma, tau, buffer_maxlen, critic_lr, actor_lr,state_dim_a,action_dim)
 episode_rewards = mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration_noise)
