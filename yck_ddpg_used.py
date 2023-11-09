@@ -281,12 +281,13 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
     episode_rewards = []
     
     for episode in range(max_episodes):
-        state = env.reset()
+        s= env.reset()
+        state=s[0]
         episode_reward = 0
         
         for step in range(max_steps):
             
-            action = agent.get_action(state[0])[0]
+            action = agent.get_action(state)[0]
             action= action + exploration_noise.get_action(action)
             next_state, reward, done, truncated, info  = env.step(action)
             agent.replay_buffer.push(state, action, reward, next_state, done)
@@ -304,7 +305,7 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
                 break
 
             state = next_state
-            plt.imshow(env.render()) # KALDIM
+            env.render() # KALDIM
 
 
 
