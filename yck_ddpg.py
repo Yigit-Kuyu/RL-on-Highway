@@ -128,7 +128,7 @@ class DDPG_agent():
         """
         Training the agent
         """
-        episodes = 3000
+        episodes = 3 # 3000
 
         time_start = time()
 
