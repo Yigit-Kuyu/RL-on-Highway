@@ -19,6 +19,13 @@ from matplotlib import pyplot as plt
 
 
 
+# About Conv2d, why in_channel is 1
+# https://datascience.stackexchange.com/questions/64278/what-is-a-channel-in-a-cnn
+
+
+# About Convolution layer output dimension
+# https://stackoverflow.com/questions/53580088/calculate-the-output-size-in-convolution-layer
+
 
 class Critic(nn.Module):
 
@@ -28,20 +35,41 @@ class Critic(nn.Module):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
 
-        self.linear1 = nn.Linear(self.obs_dim, 1024)
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=2, stride=1)
+        self.conv3 = nn.Conv2d(128, 64, kernel_size=2, stride=1)
+        
+        out_height_1, out_width_1 = conv_output(self.obs_dim, kernel=3, padding=0, stride=1)
+        out_height_2, out_width_2 = conv_output([out_height_1, out_width_1], kernel=2, padding=0, stride=1)
+        out_height_3, out_width_3 = conv_output([out_height_2, out_width_2], kernel=2, padding=0, stride=1)
+
+        linear_input_size= out_height_3*out_width_3*64
+
+
+        self.linear1 = nn.Linear(linear_input_size, 1024)
         self.linear2 = nn.Linear(1024 + self.action_dim, 512)
         self.linear3 = nn.Linear(512, 300)
         self.linear4 = nn.Linear(300, 1)
 
-    def forward(self, x, a):
+    def forward(self, obs, act):
+        # Output: (batch_size, num_channels, height, width)
+        x = F.relu(self.conv1(obs))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        
+        # Output: (batch_size, num_channels * height * width)
+        x = torch.flatten(x, 1)
+
+        
         x = F.relu(self.linear1(x))
-        xa_cat = torch.cat([x,a], 1)
+        xa_cat = torch.cat([x,act], 1)
         xa = F.relu(self.linear2(xa_cat))
         xa = F.relu(self.linear3(xa))
         qval = self.linear4(xa)
 
         return qval
     
+
 # Deterministic policy
 class Actor(nn.Module):
 
@@ -51,16 +79,45 @@ class Actor(nn.Module):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
 
-        self.linear1 = nn.Linear(self.obs_dim, 512)
-        self.linear2 = nn.Linear(512, 128)
-        self.linear3 = nn.Linear(128, self.action_dim)
+        
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1) # Output: (batch_size, 64, height, width)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=2, stride=1) # Output: (batch_size, 128, height, width)
+        self.conv3 = nn.Conv2d(128, 64, kernel_size=2, stride=1) # Output: (batch_size, 64, height, width)
+        
+        out_height_1, out_width_1 = conv_output(self.obs_dim, kernel=3, padding=0, stride=1)
+        out_height_2, out_width_2 = conv_output([out_height_1, out_width_1], kernel=2, padding=0, stride=1)
+        out_height_3, out_width_3 = conv_output([out_height_2, out_width_2], kernel=2, padding=0, stride=1)
+        
+        linear_input_size= out_height_3*out_width_3*64
+
+        
+        self.linear1 = nn.Linear(linear_input_size, 512) # Output: (batch_size, 512)
+        self.linear2 = nn.Linear(512, 128) # Output: (batch_size, 128)
+        self.linear3 = nn.Linear(128, self.action_dim) # Output: (batch_size, action_dim)
 
     def forward(self, obs):
-        x = F.relu(self.linear1(obs))
+        # Output: (batch_size, num_channels, height, width)
+        x = F.relu(self.conv1(obs))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+      
+        # Output: (batch_size, num_channels * height * width)
+        x = torch.flatten(x, 1)
+        
+        # Output: (batch_size, output dimension)
+        x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         x = torch.tanh(self.linear3(x))
 
         return x  # return action
+
+
+def conv_output(in_shape, kernel, padding, stride):
+    
+    # [(W−K+2P)/S]+1
+    out_height = int(((in_shape[0] - kernel+2*padding) / stride) + 1)
+    out_width = int(((in_shape[1] - kernel+ 2*padding ) / stride) + 1)
+    return out_height, out_width
 
 
 # Ornstein-Ulhenbeck Noise
@@ -160,8 +217,8 @@ class DDPGAgent:
         self.noise = OUNoise(self.env.action_space)
         
     def get_action(self, obs): # From Actor network
-        #state = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-        state = torch.FloatTensor(obs).to(self.device)
+        state = torch.FloatTensor(obs).unsqueeze(0).unsqueeze(0).to(self.device)
+        #state = torch.FloatTensor(obs).to(self.device)
         action = self.actor.forward(state)
         action = action.squeeze(0).cpu().detach().numpy()
 
@@ -231,7 +288,7 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
             
             action = agent.get_action(state[0])[0]
             action= action + exploration_noise.get_action(action)
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, done, truncated, info  = env.step(action)
             agent.replay_buffer.push(state, action, reward, next_state, done)
             episode_reward += reward
 

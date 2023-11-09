@@ -8,6 +8,12 @@ highway_env.register_highway_envs()
 
 
 env = gym.make('highway-v0', render_mode='rgb_array')
+env.configure({
+    "action": {
+        "type": "ContinuousAction"
+    }
+})
+
 env.reset()
 
 for _ in range(300):
