@@ -233,7 +233,8 @@ class DDPGAgent:
         
    
         ## Training Actor (Calculation of current Q)
-        state_batch = torch.FloatTensor(state_batch).to(self.device)
+        #state_batch = torch.FloatTensor(state_batch).to(self.device)
+        state_batch = torch.FloatTensor(state_batch).unsqueeze(1).to(self.device)
         action_batch = torch.FloatTensor(action_batch).to(self.device) # Deterministic action selection
         curr_Q = self.critic.forward(state_batch, action_batch) 
         
@@ -305,7 +306,7 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
                 break
 
             state = next_state
-            env.render() # KALDIM
+            env.render() 
 
 
 
@@ -371,3 +372,4 @@ exploration_noise = OUNoise(env.action_space)
 
 agent = DDPGAgent(env, gamma, tau, buffer_maxlen, critic_lr, actor_lr,state_dim_a,action_dim)
 episode_rewards = mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration_noise)
+print('stop')
