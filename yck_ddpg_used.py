@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.optim as optim
 import torch.autograd as autograd
@@ -15,6 +16,7 @@ import highway_env
 highway_env.register_highway_envs()
 
 from matplotlib import pyplot as plt
+import copy
 
 
 
@@ -192,6 +194,10 @@ class DDPGAgent:
         self.env = env
         self.obs_dim = state_dim
         self.action_dim = action_dim
+        self.total_rewards = []
+        self.avg_reward = []
+        self.actor_loss = []
+        self.critic_loss = []
         
         # hyperparameters
         self.env = env
@@ -224,6 +230,53 @@ class DDPGAgent:
 
         return action
     
+    def save(self, path, fname):
+     
+        if not os.path.exists(path):
+            os.makedirs(path)
+        path_file = os.path.join(path, fname)
+
+        save_dict = {
+            'model_actor_state': self.actor.state_dict(),
+            'model_critic_state': self.critic.state_dict(),
+            'model_actor_op_state': self.actor_optimizer.state_dict(),
+            'model_critic_op_state': self.critic_optimizer.state_dict(),
+            
+
+            'total_rewards': self.total_rewards,
+            'avg_rewards': self.avg_reward,
+            'actor_loss': self.actor_loss,
+            'critic_loss': self.critic_loss,
+
+        }
+        torch.save(save_dict, path_file)
+
+    def load(self, path, fname):
+     
+
+        path_file = os.path.join(path, fname)
+        load_dict = torch.load(path_file, map_location=self.device)
+
+        # Load weights and optimizer states
+        self.actor.load_state_dict(load_dict['model_actor_state'])
+        self.critic.load_state_dict(load_dict['model_critic_state'])
+        self.actor_optimizer.load_state_dict(load_dict['model_actor_op_state'])
+        self.critic_optimizer.load_state_dict(load_dict['model_critic_op_state'])
+        
+        # Load other variables
+        self.total_rewards = load_dict['total_rewards']
+        self.avg_reward = load_dict['avg_rewards']
+        self.a_loss = load_dict['actor_loss']
+        self.c_loss = load_dict['critic_loss']
+
+
+        # Creating the target networks
+        self.target_actor_net = copy.deepcopy(self.actor_net).to(self.device)
+        self.target_critic_net = copy.deepcopy(self.critic_net).to(self.device)
+        print("Successfully load the model parameters.")
+    
+    
+    
     def update(self, batch_size):
         states, actions, rewards, next_states, _ = self.replay_buffer.sample(batch_size)
 
@@ -232,13 +285,14 @@ class DDPGAgent:
        
         
    
-        ## Training Actor (Calculation of current Q)
-        state_batch = torch.FloatTensor(state_batch).to(self.device)
+        # Training Actor (Calculation of current Q)
+        # state_batch = torch.FloatTensor(state_batch).to(self.device)
+        state_batch = torch.FloatTensor(state_batch).unsqueeze(1).to(self.device)
         action_batch = torch.FloatTensor(action_batch).to(self.device) # Deterministic action selection
         curr_Q = self.critic.forward(state_batch, action_batch) 
         
-        ## Training target Critic (Calculation of next Q)
-        next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)
+        # Training target Critic (Calculation of next Q)
+        next_state_batch = torch.FloatTensor(next_state_batch).unsqueeze(1).to(self.device)
         next_actions = self.actor_target.forward(next_state_batch)
         next_Q = self.critic_target.forward(next_state_batch, next_actions.detach())
         
@@ -250,6 +304,7 @@ class DDPGAgent:
         
         # Main loss or critic loss (mean-squared Bellman error-MSBE, Temporal difference)
         q_loss = F.mse_loss(curr_Q, expected_Q.detach())
+        self.critic_loss.append(q_loss)
 
         # Update the critic network by minimizing loss
         self.critic_optimizer.zero_grad()
@@ -261,7 +316,7 @@ class DDPGAgent:
         # Calculate actor policy or actor loss (positive for maximizing Q, negative for minimizing loss)
         # In the below code, the goal is to minimize a loss function that measures the difference between predicted output and true label. 
         policy_loss = -self.critic.forward(state_batch, self.actor.forward(state_batch)).mean() # mean of the Q values for all state-action pairs
-        
+        self.actor_loss.append(policy_loss.item())
         # Update actor network using backward method 
         # This code block adjusts the actors's policy to produce actions that result in higher-Q values by minimizing loss.
         self.actor_optimizer.zero_grad() # gradients of the actor optimizer to zero for clean optimization
@@ -279,6 +334,7 @@ class DDPGAgent:
 
 def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration_noise):
     episode_rewards = []
+    file_name = "model_final_saved.pt"
     
     for episode in range(max_episodes):
         s= env.reset()
@@ -290,6 +346,8 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
             action = agent.get_action(state)[0]
             action= action + exploration_noise.get_action(action)
             next_state, reward, done, truncated, info  = env.step(action)
+            next_state_tensor = torch.tensor(next_state)
+            reward, done=reward_modified(reward,next_state_tensor,done)
             agent.replay_buffer.push(state, action, reward, next_state, done)
             episode_reward += reward
 
@@ -302,12 +360,61 @@ def mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration
                 episode_rewards.append(episode_reward)
                 exploration_noise.reset() # Re-initialize the process when episode ends
                 print("Episode " + str(episode) + ": " + str(episode_reward))
+                agent.total_rewards.append(reward)
+                agent.avg_reward.append(np.mean(agent.total_rewards))
                 break
 
             state = next_state
-            env.render() # KALDIM
+            env.render() 
+    agent.save("model", fname=file_name)  # Save the model parameters
+
+def reward_modified(reward,next_state_tensor,done):
+
+    num_vehicles=next_state_tensor.shape[0]
+    front_v = False
+
+    if reward == 0:
+                reward = -3
+                done = True
+    # Set done condition and giving a penalty if the ego vehicle is moving very slowly in the x-axis
+    # The ego-vehicle is always described in the first row (http://highway-env.farama.org/observations/)
+    elif next_state_tensor[0][3].item() < 0.15:
+                done = True
+                reward -= 0.7
+    else:
+            for veh in range(1, num_vehicles):
+                if abs(next_state_tensor[veh][2].item()) < 0.17:  # Check if there is any vehicle in the same lane
+                        if 0.09 < next_state_tensor[veh][1].item() < 0.15:  # Reward for maintaining appropriate distance from the front vehicle
+                                reward += 0.2
+                        if next_state_tensor[veh][3].item() < 0.07:  # Reward for maintaining relative speed to the front vehicle
+                                    reward += 0.1
+
+                        elif next_state_tensor[veh][1].item() < 0.075:  # Penalize if the ego vehicle is getting too close to the front vehicle
+                                reward -= 0.3
+
+                        if abs(next_state_tensor[veh][1].item()) < 0.20:  # Check if the front vehicle is in a safe distance
+                                front_v = True
+
+    # Reward for moving faster if there is no vehicle within the safe distance
+    if front_v == False and 0.28 < next_state_tensor[0][3].item() < 0.31:
+                    reward += 0.4
+
+    # Reward for moving with appropriate x-axis speed and not making a sharp y-axis movement
+    if abs(next_state_tensor[0][4].item()) < 0.05 and 0.24 < next_state_tensor[0][3].item() < 0.31:
+                    reward += 0.4
+
+    # Penalize for moving too slow but still above the threshold
+    elif next_state_tensor[0][3].item() < 0.2:
+                    reward -= 0.4
+
+    # Penalize for making a very quick movement in the y-axis
+    if next_state_tensor[0][4].item() > 0.2:
+                    reward -= 0.4
+                    done = True
 
 
+    return reward, done
+                
 
 env = gym.make('highway-v0', render_mode='rgb_array')
 
@@ -315,7 +422,7 @@ env = gym.make('highway-v0', render_mode='rgb_array')
 env.configure(
     {"observation": {
         "type": "Kinematics",
-        "vehicles_count": 5, #rows of observation
+        "vehicles_count": 7, #rows of observation
         "features": ["presence", "x", "y", "vx", "vy"],
     },
 
@@ -371,3 +478,4 @@ exploration_noise = OUNoise(env.action_space)
 
 agent = DDPGAgent(env, gamma, tau, buffer_maxlen, critic_lr, actor_lr,state_dim_a,action_dim)
 episode_rewards = mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration_noise)
+print('stop')
