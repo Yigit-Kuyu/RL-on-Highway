@@ -266,13 +266,13 @@ class DDPGAgent:
         # Load other variables
         self.total_rewards = load_dict['total_rewards']
         self.avg_reward = load_dict['avg_rewards']
-        self.a_loss = load_dict['actor_loss']
-        self.c_loss = load_dict['critic_loss']
+        self.actor_loss = load_dict['actor_loss']
+        self.critic_loss = load_dict['critic_loss']
 
 
         # Creating the target networks
-        self.target_actor_net = copy.deepcopy(self.actor_net).to(self.device)
-        self.target_critic_net = copy.deepcopy(self.critic_net).to(self.device)
+        self.target_actor_net = copy.deepcopy(self.actor).to(self.device)
+        self.target_critic_net = copy.deepcopy(self.critic).to(self.device)
         print("Successfully load the model parameters.")
     
     
@@ -387,7 +387,7 @@ def reward_modified(reward,next_state_tensor,done):
                         if 0.09 < next_state_tensor[veh][1].item() < 0.15:  # Reward for maintaining appropriate distance from the front vehicle
                                 reward += 0.2
                         if next_state_tensor[veh][3].item() < 0.07:  # Reward for maintaining relative speed to the front vehicle
-                                    reward += 0.1
+                                reward += 0.1
 
                         elif next_state_tensor[veh][1].item() < 0.075:  # Penalize if the ego vehicle is getting too close to the front vehicle
                                 reward -= 0.3
@@ -418,9 +418,9 @@ def reward_modified(reward,next_state_tensor,done):
 
 env = gym.make('highway-v0', render_mode='rgb_array')
 
+
 # Environment configuration
-env.configure(
-    {"observation": {
+configuration={"observation": {
         "type": "Kinematics",
         "vehicles_count": 7, #rows of observation
         "features": ["presence", "x", "y", "vx", "vy"],
@@ -449,9 +449,11 @@ env.configure(
         "show_trajectories": False,
         "render_agent": True,
         "offscreen_rendering": False
-    })
+    }
 
-max_episodes = 100
+env.configure(configuration)
+
+max_episodes = 1000
 max_steps = 500
 batch_size = 32
 
@@ -460,6 +462,7 @@ tau = 1e-2
 buffer_maxlen = 100000
 critic_lr = 1e-3
 actor_lr = 1e-3
+num_of_test_episodes=200
 
 state = env.reset()
 
@@ -476,6 +479,56 @@ action_dim = env.action_space.shape[0]
 
 exploration_noise = OUNoise(env.action_space)
 
+# Training
 agent = DDPGAgent(env, gamma, tau, buffer_maxlen, critic_lr, actor_lr,state_dim_a,action_dim)
 episode_rewards = mini_batch_train(env, agent, max_episodes, max_steps, batch_size,exploration_noise)
+
+
+# Testing 
+reward_test=[]
+avg_reward_test=[]
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+new_env=gym.make('highway-v0', render_mode='rgb_array')
+new_env.configure(configuration)
+agent.load("model", "model_final_saved.pt") # Agent degisecek mi?
+agent.actor.to(agent.device)
+for i in range(num_of_test_episodes):
+    s = new_env.reset()
+    state=s[0]
+    local_reward = 0
+    done = False
+    while not done:
+        state =  torch.FloatTensor(state).unsqueeze(0).unsqueeze(0).to(agent.device)
+        #state =  torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
+        action = agent.actor.forward(state)      
+        action = action.squeeze(0).cpu().detach().numpy()
+        next_state, reward, done, truncated, info= new_env.step(action)
+        next_state_tensor = torch.tensor(next_state)
+        reward, done=reward_modified(reward,next_state_tensor,done)
+        state=next_state
+        local_reward += reward
+        new_env.render()
+    reward_test.append(local_reward)
+    avg_reward_test.append(np.mean(reward_test))
+
+plt.plot(agent.critic_loss)
+plt.ylabel("Critic Loss")
+plt.xlabel("Updated Steps")
+plt.title("Critic Loss")
+plt.show()
+
+plt.plot(agent.actor_loss)
+plt.ylabel("Actor Loss")
+plt.xlabel("Updated Steps")
+plt.title("Actor Loss")
+plt.show()
+
+plt.plot(agent.total_rewards, label='Total Reward in the episode')
+plt.plot(agent.avg_reward, label='Average Total Reward over episodes')
+plt.ylabel("Rewards")
+plt.title("Training Reward")
+plt.xlabel("Episodes")
+plt.legend()
+plt.show()
+
 print('stop')
